@@ -47,12 +47,17 @@
 #include <math.h>
 #include <string.h>
 #include <stdint.h>
+#include <sys/stat.h>
 #include "../include/decls.h"
 #include "../include/cephes.h"  
 #include "../include/utilities.h"
 
-void	partitionResultFile(int numOfFiles, int numOfSequences, int option, int testNameID);
-void	postProcessResults(int option);
+#define NUM_ALGORITHMS 12
+#define NUM_TESTS 15
+
+void	partitionResultFile(int numOfFiles, int numOfSequences, int option, int testNameID, char* dir_suffix);
+void	postProcessResults(int option, char* dir_suffix);
+void	createExperimentDirectories(const char *suffix);
 int		cmp(const double *a, const double *b);
 int		computeMetrics(char *s, int test);
 
@@ -62,17 +67,19 @@ main(int argc, char *argv[])
 	int		i;
 	int		option;			/* TEMPLATE LENGTH/STREAM LENGTH/GENERATOR*/
 	char	*streamFile;	/* STREAM FILENAME     */
+	char *suffix;
 	printf("sizeof(char): %lu, sizeof(BYTE): %lu, sizeof(USHORT): %lu, sizeof(int):   %lu\n"
 		   "sizeof(UINT): %lu, sizeof(long): %lu, sizeof(double): %lu, sizeof(ULONG): %lu\n\n",
 			sizeof(char), sizeof(BYTE), sizeof(USHORT), sizeof(int),\
 			sizeof(UINT), sizeof(long), sizeof(double), sizeof(ULONG));
 
-	if ( argc != 2 ) {
-		printf("Usage: %s <stream length>\n", argv[0]);
+	if ( argc != 3 ) {
+		printf("Usage: %s <stream length> <output_dir suffix>\n", argv[0]);
 		printf("   <stream length> is the length of the individual bit stream(s) to be processed\n");
+		printf("   <output_dir suffix> suffix which is used to create experiment parent folder\n");
 		return 0;
 	}
-
+	suffix=argv[2];
 	tp.n = atoi(argv[1]);
 	tp.blockFrequencyBlockLength = 128;
 	tp.nonOverlappingTemplateBlockLength = 9;
@@ -84,7 +91,8 @@ main(int argc, char *argv[])
 	option = generatorOptions(&streamFile);
 	chooseTests();
 	fixParameters();
-	openOutputStreams(option);
+	createExperimentDirectories(suffix);
+	openOutputStreams(option,suffix);
 	invokeTestSuite(option, streamFile);
 	fclose(freqfp);
 	for( i=1; i<=NUMOFTESTS; i++ ) {
@@ -94,15 +102,15 @@ main(int argc, char *argv[])
 			fclose(results[i]);
 	}
 	if ( (testVector[0] == 1) || (testVector[TEST_CUSUM] == 1) ) 
-		partitionResultFile(2, tp.numOfBitStreams, option, TEST_CUSUM);
+		partitionResultFile(2, tp.numOfBitStreams, option, TEST_CUSUM,suffix);
 	if ( (testVector[0] == 1) || (testVector[TEST_NONPERIODIC] == 1) ) 
-		partitionResultFile(MAXNUMOFTEMPLATES, tp.numOfBitStreams, option, TEST_NONPERIODIC);
+		partitionResultFile(MAXNUMOFTEMPLATES, tp.numOfBitStreams, option, TEST_NONPERIODIC,suffix);
 	if ( (testVector[0] == 1) || (testVector[TEST_RND_EXCURSION] == 1) )
-		partitionResultFile(8, tp.numOfBitStreams, option, TEST_RND_EXCURSION);
+		partitionResultFile(8, tp.numOfBitStreams, option, TEST_RND_EXCURSION,suffix);
 	if ( (testVector[0] == 1) || (testVector[TEST_RND_EXCURSION_VAR] == 1) )
-		partitionResultFile(18, tp.numOfBitStreams, option, TEST_RND_EXCURSION_VAR);
+		partitionResultFile(18, tp.numOfBitStreams, option, TEST_RND_EXCURSION_VAR,suffix);
 	if ( (testVector[0] == 1) || (testVector[TEST_SERIAL] == 1) )
-		partitionResultFile(2, tp.numOfBitStreams, option, TEST_SERIAL);
+		partitionResultFile(2, tp.numOfBitStreams, option, TEST_SERIAL,suffix);
 	fprintf(summary, "------------------------------------------------------------------------------\n");
 	fprintf(summary, "RESULTS FOR THE UNIFORMITY OF P-VALUES AND THE PROPORTION OF PASSING SEQUENCES\n");
 	fprintf(summary, "------------------------------------------------------------------------------\n");
@@ -110,14 +118,14 @@ main(int argc, char *argv[])
 	fprintf(summary, "------------------------------------------------------------------------------\n");
 	fprintf(summary, " C1  C2  C3  C4  C5  C6  C7  C8  C9 C10  P-VALUE  PROPORTION  STATISTICAL TEST\n");
 	fprintf(summary, "------------------------------------------------------------------------------\n");
-	postProcessResults(option);
+	postProcessResults(option,suffix);
 	fclose(summary);
 
 	return 1;
 }
 
 void
-partitionResultFile(int numOfFiles, int numOfSequences, int option, int testNameID)
+partitionResultFile(int numOfFiles, int numOfSequences, int option, int testNameID, char* dir_suffix)
 { 
 	int		i, k, m, j, start, end, num, numread;
 	float	c;
@@ -128,7 +136,7 @@ partitionResultFile(int numOfFiles, int numOfSequences, int option, int testName
 	for ( i=0; i<MAXFILESPERMITTEDFORPARTITION; i++ )
 		s[i] = (char*)calloc(200, sizeof(char));
 	
-	sprintf(resultsDir, "experiments/%s/%s/results.txt", generatorDir[option], testNames[testNameID]);
+	sprintf(resultsDir, "experiments_%s/%s/%s/results.txt", dir_suffix, generatorDir[option], testNames[testNameID]);
 	
 	if ( (fp[numOfFiles] = fopen(resultsDir, "r")) == NULL ) {
 		printf("%s", resultsDir);
@@ -138,11 +146,11 @@ partitionResultFile(int numOfFiles, int numOfSequences, int option, int testName
 	
 	for ( i=0; i<numOfFiles; i++ ) {
 		if ( i < 10 )
-			sprintf(s[i], "experiments/%s/%s/data%1d.txt", generatorDir[option], testNames[testNameID], i+1);
+			sprintf(s[i], "experiments_%s/%s/%s/data%1d.txt", dir_suffix, generatorDir[option], testNames[testNameID], i+1);
 		else if (i < 100)
-			sprintf(s[i], "experiments/%s/%s/data%2d.txt", generatorDir[option], testNames[testNameID], i+1);
+			sprintf(s[i], "experiments_%s/%s/%s/data%2d.txt", dir_suffix, generatorDir[option], testNames[testNameID], i+1);
 		else
-			sprintf(s[i], "experiments/%s/%s/data%3d.txt", generatorDir[option], testNames[testNameID], i+1);
+			sprintf(s[i], "experiments_%s/%s/%s/data%3d.txt", dir_suffix, generatorDir[option], testNames[testNameID], i+1);
 	}
 	numread = 0;
 	m = numOfFiles/20;
@@ -199,8 +207,39 @@ cmp(const double *a, const double *b)
 	return 1;
 }
 
+void createExperimentDirectories(const char *suffix) {
+    char parentDir[100];
+    sprintf(parentDir, "experiments_%s", suffix);
+    mkdir(parentDir, 0777);
+
+    const char *algorithms[NUM_ALGORITHMS] = {
+        "AlgorithmTesting", "BBS", "CCG", "G-SHA1", "LCG", "MODEXP",
+        "MS", "QCG1", "QCG2", "XOR", "XORRIOT"
+    };
+
+    const char *tests[NUM_TESTS] = {
+        "ApproximateEntropy", "BlockFrequency", "CumulativeSums", "FFT",
+        "Frequency", "LinearComplexity", "LongestRun", "NonOverlappingTemplate",
+        "OverlappingTemplate", "RandomExcursions", "RandomExcursionsVariant",
+        "Rank", "Runs", "Serial", "Universal"
+    };
+
+    char dirName[200];
+
+    for (int i = 0; i < NUM_ALGORITHMS; i++) {
+        sprintf(dirName, "%s/%s", parentDir, algorithms[i]);
+        mkdir(dirName, 0777);
+
+        for (int j = 0; j < NUM_TESTS; j++) {
+            sprintf(dirName, "%s/%s", parentDir, algorithms[i]);
+            sprintf(dirName, "%s/%s", dirName, tests[j]);
+            mkdir(dirName, 0777);
+        }
+    }
+}
+
 void
-postProcessResults(int option)
+postProcessResults(int option, char* dir_suffix)
 {
 	int		i, k, randomExcursionSampleSize, generalSampleSize;
 	int		passRate, case1, case2, numOfFiles = 2;
@@ -226,11 +265,11 @@ postProcessResults(int option)
 					numOfFiles = 2;
 				for ( k=0; k<numOfFiles; k++ ) {
 					if ( k < 10 )
-						sprintf(s, "experiments/%s/%s/data%1d.txt", generatorDir[option], testNames[i], k+1);
+						sprintf(s, "experiments_%s/%s/%s/data%1d.txt", dir_suffix, generatorDir[option], testNames[i], k+1);
 					else if ( k < 100 )
-						sprintf(s, "experiments/%s/%s/data%2d.txt", generatorDir[option], testNames[i], k+1);
+						sprintf(s, "experiments_%s/%s/%s/data%2d.txt", dir_suffix,generatorDir[option], testNames[i], k+1);
 					else
-						sprintf(s, "experiments/%s/%s/data%3d.txt", generatorDir[option], testNames[i], k+1);
+						sprintf(s, "experiments_%s/%s/%s/data%3d.txt", dir_suffix,generatorDir[option], testNames[i], k+1);
 					if ( (i == TEST_RND_EXCURSION) || (i == TEST_RND_EXCURSION_VAR) ) 
 						randomExcursionSampleSize = computeMetrics(s,i);
 					else
@@ -238,7 +277,7 @@ postProcessResults(int option)
 				}
 			}
 			else {
-				sprintf(s, "experiments/%s/%s/results.txt", generatorDir[option], testNames[i]);
+				sprintf(s, "experiments_%s/%s/%s/results.txt", dir_suffix,generatorDir[option], testNames[i]);
 				generalSampleSize = computeMetrics(s,i);
 			}
 		}
